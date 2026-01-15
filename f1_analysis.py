@@ -1,87 +1,69 @@
 import streamlit as st
-import fastf1
 import pandas as pd
 import os
 
 # 1. Page Config
-st.set_page_config(page_title="F1 Telemetry Analyst", layout="wide")
+st.set_page_config(page_title="F1 Diagnostics", layout="centered")
 
-# 2. Setup (Cache Only - No Matplotlib setup needed)
-@st.cache_resource
-def setup_f1():
+st.title("🛠️ F1 App Diagnostics")
+st.write("Step 1: App started. Importing libraries...")
+
+try:
+    import fastf1
+    st.write("Step 2: FastF1 imported successfully.")
+except Exception as e:
+    st.error(f"CRITICAL ERROR: Could not import FastF1. {e}")
+    st.stop()
+
+# 2. Cache Setup
+try:
     cache_dir = 'cache'
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
     fastf1.Cache.enable_cache(cache_dir)
-
-setup_f1()
+    st.write("Step 3: Cache directory setup complete.")
+except Exception as e:
+    st.warning(f"Cache warning (non-fatal): {e}")
 
 # 3. Sidebar
-st.sidebar.title("🏎️ F1 Deep Dive (Lightweight)")
-year = st.sidebar.selectbox("Year", [2024, 2023, 2022], index=1)
-gp = st.sidebar.selectbox("Grand Prix", ["Monaco", "Bahrain", "Silverstone", "Monza"], index=0)
-session_type = st.sidebar.radio("Session", ["Q", "R"], format_func=lambda x: "Qualifying" if x == "Q" else "Race")
+st.sidebar.header("Settings")
+year = st.sidebar.selectbox("Year", [2023], index=0)
+gp = st.sidebar.selectbox("Grand Prix", ["Monaco", "Bahrain"], index=0)
+d1 = st.sidebar.text_input("Driver", "VER")
 
-col1, col2 = st.sidebar.columns(2)
-d1 = col1.text_input("Driver 1", "VER")
-d2 = col2.text_input("Driver 2", "LEC")
-
-# 4. Analysis
-st.title(f"🏁 {year} {gp} - Native Analysis")
-
-if st.sidebar.button("Analyze Telemetry"):
+if st.sidebar.button("Run Diagnostics"):
+    st.write("Step 4: Button clicked. Attempting to download data...")
+    
     try:
-        with st.spinner(f"Pulling telemetry for {d1} vs {d2}..."):
-            
+        with st.spinner("Downloading..."):
             # Load Session
-            session = fastf1.get_session(year, gp, session_type)
+            session = fastf1.get_session(year, gp, 'Q')
+            
+            # LIGHTWEIGHT LOAD: We only load what we absolutely need
+            st.write("Step 5: Session object created. Loading data...")
             session.load(telemetry=True, weather=False, messages=False)
+            st.write("Step 6: Data loaded from F1 servers.")
             
-            # Pick Fastest Laps
-            laps = session.laps.pick_drivers([d1, d2])
-            d1_lap = laps.pick_drivers(d1).pick_fastest()
-            d2_lap = laps.pick_drivers(d2).pick_fastest()
+            # Pick Lap
+            lap = session.laps.pick_drivers(d1).pick_fastest()
+            st.write(f"Step 7: Fastest lap found for {d1}: {lap['LapTime']}")
             
-            # Telemetry
-            d1_tel = d1_lap.get_car_data().add_distance()
-            d2_tel = d2_lap.get_car_data().add_distance()
+            # Get Telemetry
+            tel = lap.get_car_data().add_distance()
+            raw_count = len(tel)
+            st.write(f"Step 8: Raw telemetry has {raw_count} points.")
             
-            # --- DEBUG: CHECK DATA ---
-            # If this prints 0, we know the data is empty!
-            st.write(f"DEBUG: Found {len(d1_tel)} data points for {d1}")
+            # DOWNSAMPLING (The Fix?)
+            # Take every 10th point to save memory
+            tel_small = tel.iloc[::10]
+            st.write(f"Step 9: Downsampled to {len(tel_small)} points for plotting.")
             
-            # --- PREPARE DATA FOR NATIVE CHARTS ---
-            # Streamlit needs a single dataframe with columns: [Distance, Speed_VER, Speed_LEC]
+            # Plotting
+            st.subheader("Test Plot (Speed)")
+            st.line_chart(tel_small[['Distance', 'Speed']].set_index('Distance'))
+            st.write("Step 10: Plot rendered successfully!")
             
-            # 1. Rename columns to identify drivers
-            d1_df = d1_tel[['Distance', 'Speed', 'Throttle', 'Brake']].copy()
-            d1_df.columns = ['Distance', f'Speed {d1}', f'Throttle {d1}', f'Brake {d1}']
-            
-            d2_df = d2_tel[['Distance', 'Speed', 'Throttle', 'Brake']].copy()
-            d2_df.columns = ['Distance', f'Speed {d2}', f'Throttle {d2}', f'Brake {d2}']
-            
-            # 2. Merge them on Distance (approximate)
-            # We align them by index for a rough "overlay" since distances never match perfectly
-            # A simple way for MVP: Just plot them independently on same chart
-            
-            st.subheader("🚀 Speed Trace")
-            # We create a combined chart manually using line_chart
-            chart_data = pd.DataFrame({
-                f"{d1} Speed": d1_tel['Speed'].values,
-                f"{d2} Speed": d2_tel['Speed'].values
-            })
-            st.line_chart(chart_data, color=["#0000FF", "#FF0000"]) # Blue vs Red
-
-            st.subheader("🦶 Throttle Trace")
-            throttle_data = pd.DataFrame({
-                f"{d1} Throttle": d1_tel['Throttle'].values,
-                f"{d2} Throttle": d2_tel['Throttle'].values
-            })
-            st.line_chart(throttle_data, color=["#0000FF", "#FF0000"])
-
-            # Metrics
-            delta = d1_lap['LapTime'] - d2_lap['LapTime']
-            st.success(f"Gap: {delta.total_seconds():.3f}s")
+            st.success("Diagnostics Passed! The app is working.")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"CRASH AT STEP X: {e}")
