@@ -1,59 +1,76 @@
+import streamlit as st
 import fastf1
 import fastf1.plotting
 import matplotlib.pyplot as plt
 
-# 1. Enable the cache (you already created the folder, so this works now!)
-fastf1.Cache.enable_cache('cache') 
+# 1. Page Config (The title of your website tab)
+st.set_page_config(page_title="F1 Telemetry Analyzer", layout="wide")
 
-# 2. Setup the plotting style (Updated for v3.7+)
-fastf1.plotting.setup_mpl()
+# 2. Setup (Cache and Plotting)
+# We use @st.cache_data so it doesn't redownload data every time you click a button
+@st.cache_resource
+def setup_f1():
+    fastf1.Cache.enable_cache('cache')
+    fastf1.plotting.setup_mpl()
 
-def compare_drivers(year, grand_prix, session_type, driver1_code, driver2_code):
-    print(f"Loading {year} {grand_prix}...")
-    
-    # Load the Session
-    session = fastf1.get_session(year, grand_prix, session_type)
-    session.load()
-    
-    # 3. Pick the fastest laps (Updated to use 'pick_drivers')
-    d1_lap = session.laps.pick_drivers(driver1_code).pick_fastest()
-    d2_lap = session.laps.pick_drivers(driver2_code).pick_fastest()
-    
-    # Extract Telemetry
-    d1_tel = d1_lap.get_car_data().add_distance()
-    d2_tel = d2_lap.get_car_data().add_distance()
-    
-    # Calculate the Gap
-    delta_time = d1_lap['LapTime'] - d2_lap['LapTime']
-    winner = driver1_code if delta_time.total_seconds() < 0 else driver2_code
-    gap = abs(delta_time.total_seconds())
-    
-    print(f"Stats loaded! {winner} was faster by {gap:.3f} seconds.")
-    
-    # --- PLOTTING ---
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    # 4. Get Driver Colors (Updated to use 'get_driver_color' with session)
-    d1_color = fastf1.plotting.get_driver_color(driver1_code, session=session)
-    d2_color = fastf1.plotting.get_driver_color(driver2_code, session=session)
-    
-    # Plot Driver 1
-    ax.plot(d1_tel['Distance'], d1_tel['Speed'], 
-            color=d1_color, 
-            label=driver1_code)
-    
-    # Plot Driver 2
-    ax.plot(d2_tel['Distance'], d2_tel['Speed'], 
-            color=d2_color, 
-            label=driver2_code,
-            linestyle='--') 
+setup_f1()
 
-    ax.set_title(f"{year} {grand_prix} ({session_type}): {driver1_code} vs {driver2_code}")
-    ax.set_xlabel("Distance along track (meters)")
-    ax.set_ylabel("Speed (km/h)")
-    ax.legend()
-    
-    plt.show()
+# 3. The Sidebar (User Inputs)
+st.sidebar.title("🏎️ F1 Telemetry Tool")
+st.sidebar.markdown("Compare two drivers' fastest laps.")
 
-# Run the comparison
-compare_drivers(2023, 'Monaco', 'Q', 'VER', 'LEC')
+# Dropdowns for Year and Grand Prix
+year = st.sidebar.selectbox("Year", [2023, 2022, 2021], index=0)
+gp = st.sidebar.selectbox("Grand Prix", ["Monaco", "Bahrain", "Silverstone", "Monza"], index=0)
+session_type = st.sidebar.radio("Session", ["Q", "R"], format_func=lambda x: "Qualifying" if x == "Q" else "Race")
+
+# Driver Inputs (Hardcoded for now, we can make this dynamic later)
+d1 = st.sidebar.text_input("Driver 1 (3 letter code)", "VER")
+d2 = st.sidebar.text_input("Driver 2 (3 letter code)", "LEC")
+
+# 4. The Main App Logic
+st.title(f"🏁 {year} {gp} Analysis")
+
+if st.sidebar.button("Analyze Telemetry"):
+    try:
+        with st.spinner(f"Downloading data for {gp}..."):
+            # Load Session
+            session = fastf1.get_session(year, gp, session_type)
+            session.load()
+            
+            # Pick Drivers
+            d1_lap = session.laps.pick_drivers(d1).pick_fastest()
+            d2_lap = session.laps.pick_drivers(d2).pick_fastest()
+            
+            # Telemetry
+            d1_tel = d1_lap.get_car_data().add_distance()
+            d2_tel = d2_lap.get_car_data().add_distance()
+            
+            # Delta
+            delta = d1_lap['LapTime'] - d2_lap['LapTime']
+            gap = delta.total_seconds()
+            
+            # Display Metrics
+            col1, col2 = st.columns(2)
+            col1.metric(f"{d1} Lap Time", str(d1_lap['LapTime']).split('days')[-1].strip(), delta_color="normal")
+            col2.metric(f"{d2} Lap Time", str(d2_lap['LapTime']).split('days')[-1].strip(), f"{gap:.3f}s")
+            
+            # Plotting
+            fig, ax = plt.subplots(figsize=(10, 5))
+            
+            # Colors
+            d1_color = fastf1.plotting.get_driver_color(d1, session=session)
+            d2_color = fastf1.plotting.get_driver_color(d2, session=session)
+            
+            ax.plot(d1_tel['Distance'], d1_tel['Speed'], color=d1_color, label=d1)
+            ax.plot(d2_tel['Distance'], d2_tel['Speed'], color=d2_color, label=d2, linestyle='--')
+            
+            ax.set_xlabel("Distance (m)")
+            ax.set_ylabel("Speed (km/h)")
+            ax.legend()
+            
+            # THE MAGIC LINE: Send the plot to the website
+            st.pyplot(fig)
+            
+    except Exception as e:
+        st.error(f"Error: {e}")
